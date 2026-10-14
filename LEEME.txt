@@ -1,0 +1,8 @@
+CdP Terreno — versión para celular (offline)
+
+Sube TODO el contenido de esta carpeta (index.html, sw.js, manifest.webmanifest,
+html2canvas.min.js y la carpeta icons) a la raíz de un repositorio público de GitHub
+y activa GitHub Pages (Settings → Pages → Deploy from a branch → main / root).
+
+Para actualizar la app más adelante: reemplaza los archivos en el repositorio.
+Los datos de cada celular NO se borran al actualizar.
