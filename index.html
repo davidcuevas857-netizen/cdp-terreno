@@ -495,6 +495,8 @@ textarea{resize:vertical;min-height:96px;line-height:1.5;}
 .storage-banner[hidden]{display:none!important;}
 @media(max-width:720px){#btn-install{margin-left:auto;}#btn-install:not([hidden]) + .auto-pill{margin-left:0;}}
 @media(max-width:560px){.kpi-ini{grid-column:1/-1;}}
+.seg.seg-sm{margin:6px 0 4px;padding:2px;}
+.seg.seg-sm button{padding:3px 8px;font-size:.72rem;}
 /* Document styles (always light) */
 .cdp-doc{background:#fff;color:#1a2035;font-family:'Inter',Arial,sans-serif;font-size:13px;line-height:1.6;border:2.5px solid #00305e;border-radius:6px;overflow:hidden;box-shadow:0 0 0 1px #b0bdd6;}
 .doc-header{background:#00305e;padding:0;display:flex;align-items:stretch;}
@@ -2014,6 +2016,15 @@ function inicioPromedio(recs){
   });
   return ['A','B'].filter(t=>acc[t]).map(t=>{const a=acc[t];const ini=a.ini/a.n,prog=a.prog/a.n;return {t,n:a.n,ini:minToHM(ini),prog:minToHM(prog),dif:Math.round(ini-prog)};});
 }
+/** ¿La actividad es Gestión de Sitio (GDS)? */
+function isGDS(name){return /^\s*gds\b/i.test(name||'')||/gesti[oó]n\s+de\s+sitio/i.test(name||'');}
+const INI_MODOS={todas:'Todas las actividades',gds:'Solo GDS',sin:'Sin GDS'};
+/** Filtra CdP según su actividad de referencia (1ª actividad con hora programada). */
+function filtrarIni(recs,modo){
+  if(modo==='todas') return recs;
+  return recs.filter(r=>{const ref=(r.labores||[]).find(l=>l.hora);if(!ref)return false;return modo==='gds'?isGDS(ref.labor):!isGDS(ref.labor);});
+}
+function setIniModo(m){config.iniModo=m;saveConfig();renderKpis();}
 function fmtDif(d){return d===0?'a tiempo':(d>0?'+':'−')+Math.abs(d)+' min';}
 function renderKpis(){
   const desde=$('k-desde').value, hasta=$('k-hasta').value, ctto=$('k-ctto').value, tol=config.tolerancia||0;
@@ -2057,6 +2068,8 @@ function renderKpis(){
 
   // Inicio promedio por turno
   const inicioProm=inicioPromedio(list);
+  const iniModo=INI_MODOS[config.iniModo]?config.iniModo:'todas';
+  const iniSel=inicioPromedio(filtrarIni(list,iniModo));
   // Por labor de referencia
   const byL={};
   const ambosTurnos=inicioProm.length>1;
@@ -2089,7 +2102,7 @@ function renderKpis(){
       <div class="kpi-tile"><div class="kpi-l">CdP registradas</div><div class="kpi-v">${N}</div><div class="kpi-s">${dias} día${dias>1?'s':''} · ${Object.keys(byP).length} posturas</div></div>
       <div class="kpi-tile"><div class="kpi-l">Atraso promedio</div><div class="kpi-v">${promAtraso}<small>min</small></div><div class="kpi-s">${atrasos.length} CdP atrasadas · máx. ${maxAtraso} min</div></div>
       <div class="kpi-tile"><div class="kpi-l">Sin inicio</div><div class="kpi-v">${Math.round(nSin/N*100)}<small>%</small></div><div class="kpi-s">${nSin} CdP sin inicio en la visita</div></div>
-      <div class="kpi-tile kpi-ini"><div class="kpi-l">Inicio promedio de actividades</div>${inicioProm.length?inicioProm.map(x=>`<div class="kt-row">${inicioProm.length>1?`<span class="kt-l">${TURNO_LBL[x.t]}</span>`:''}<span class="kpi-v kt-v">${x.ini}</span><span class="kt-dif ${x.dif>tol?'late':'ok'}">${fmtDif(x.dif)}</span></div><div class="kpi-s">${inicioProm.length>1?'':TURNO_LBL[x.t]+' · '}prog. prom. ${x.prog} · ${x.n} CdP con inicio</div>`).join(''):`<div class="kpi-v">—</div><div class="kpi-s">Sin CdP con hora de inicio y hora programada</div>`}</div>
+      <div class="kpi-tile kpi-ini"><div class="kpi-l">Inicio promedio de actividades</div><div class="seg seg-sm" role="group" aria-label="Actividades consideradas">${[["todas","Todas"],["gds","Solo GDS"],["sin","Sin GDS"]].map(([k,l])=>`<button type="button" class="${iniModo===k?"on":""}" onclick="setIniModo('${k}')">${l}</button>`).join("")}</div>${iniSel.length?iniSel.map(x=>`<div class="kt-row">${iniSel.length>1?`<span class="kt-l">${TURNO_LBL[x.t]}</span>`:''}<span class="kpi-v kt-v">${x.ini}</span><span class="kt-dif ${x.dif>tol?'late':'ok'}">${fmtDif(x.dif)}</span></div><div class="kpi-s">${iniSel.length>1?'':TURNO_LBL[x.t]+' · '}prog. prom. ${x.prog} · ${x.n} CdP con inicio</div>`).join(''):`<div class="kpi-v">—</div><div class="kpi-s">Sin CdP con hora de inicio y hora programada${iniModo!=="todas"?" para "+INI_MODOS[iniModo].toLowerCase():""}</div>`}</div>
       <div class="kpi-tile"><div class="kpi-l">Alertas activas</div><div class="kpi-v">${alertasAct}</div><div class="kpi-s">${alertasAlta} de prioridad alta</div></div>
     </div>
     <div class="chart-grid">
@@ -2118,7 +2131,7 @@ function renderKpis(){
         ${labHtml}
       </div>
     </div>
-    <div class="note"><b>Cómo se calcula.</b> <b>Inicio promedio</b> = promedio de la hora de inicio real de las CdP que tienen hora de inicio y hora programada, separado en turno día (actividad programada entre 06:00 y 17:59) y turno noche (resto); en turno noche se considera el cruce de medianoche. Una CdP está <b>a tiempo</b> si la hora de inicio real es ≤ hora programada de la 1ª actividad con hora + tolerancia. <b>Sin inicio</b> = no se registró hora de inicio durante la visita (se cuenta como no cumplida). <b>Sin referencia</b> = no tiene hora programada y queda fuera del %. Inicios después de medianoche se corrigen para turno noche. El atraso promedio considera solo las CdP atrasadas${promGeneral!==null?`; el desfase promedio de todas las CdP con inicio es ${promGeneral>0?'+':''}${promGeneral} min`:''}.</div>`;
+    <div class="note"><b>Cómo se calcula.</b> <b>Inicio promedio</b> = promedio de la hora de inicio real de las CdP que tienen hora de inicio y hora programada (filtro <i>Solo GDS / Sin GDS</i> según la 1ª actividad programada de la CdP: GDS o "Gestión de sitio"), separado en turno día (actividad programada entre 06:00 y 17:59) y turno noche (resto); en turno noche se considera el cruce de medianoche. Una CdP está <b>a tiempo</b> si la hora de inicio real es ≤ hora programada de la 1ª actividad con hora + tolerancia. <b>Sin inicio</b> = no se registró hora de inicio durante la visita (se cuenta como no cumplida). <b>Sin referencia</b> = no tiene hora programada y queda fuera del %. Inicios después de medianoche se corrigen para turno noche. El atraso promedio considera solo las CdP atrasadas${promGeneral!==null?`; el desfase promedio de todas las CdP con inicio es ${promGeneral>0?'+':''}${promGeneral} min`:''}.</div>`;
 
   const per=(desde||hasta)?`${desde?fmtDia(desde,{day:'2-digit',month:'short'}):'inicio'} al ${hasta?fmtDia(hasta,{day:'2-digit',month:'short',year:'numeric'}):'hoy'}`:'todo el registro';
   const peores=rank.filter(x=>x.pct!==null&&x.pct<100).slice(0,3).map(x=>`${x.p} (${x.pct}% a tiempo${x.prom?', atraso prom. '+x.prom+' min':''})`);
@@ -2126,7 +2139,7 @@ function renderKpis(){
     `• CdP registradas: ${N} (${dias} día${dias>1?'s':''}, ${Object.keys(byP).length} posturas)`,
     `• Inicio a tiempo: ${pctOk}% (${nOk} de ${evaluables})${tol?' con tolerancia de '+tol+' min':''}`,
     `• CdP con desfase: ${atrasos.length} — atraso promedio ${promAtraso} min, máximo ${maxAtraso} min`,
-    inicioProm.length?`• Inicio promedio de actividades: ${inicioProm.map(x=>`${TURNO_LBL[x.t]} ${x.ini} h (programado ${x.prog} h, ${fmtDif(x.dif)}; ${x.n} CdP)`).join(' · ')}`:'',
+    iniSel.length?`• Inicio promedio de actividades (${INI_MODOS[iniModo]}): ${iniSel.map(x=>`${TURNO_LBL[x.t]} ${x.ini} h (programado ${x.prog} h, ${fmtDif(x.dif)}; ${x.n} CdP)`).join(' · ')}`:'',
     `• Sin inicio de actividad durante la visita: ${nSin} (${Math.round(nSin/N*100)}%)`,
     cncRank.filter(x=>x.t!=='__sin').length?`• Principales causas (CNC): ${cncRank.filter(x=>x.t!=='__sin').slice(0,3).map(x=>`${x.t} (${x.n})`).join('; ')}${byC.__sin?` · ${byC.__sin.n} sin CNC registrada`:''}`:'',
     peores.length?`• Posturas con menor cumplimiento: ${peores.join('; ')}`:'',

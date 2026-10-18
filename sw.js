@@ -1,5 +1,5 @@
 // Service worker — CdP Terreno (offline)
-const CACHE = 'cdp-terreno-v2';
+const CACHE = 'cdp-terreno-v3';
 const FONT_CACHE = 'cdp-fonts';
 const ASSETS = ['./','./index.html','./manifest.webmanifest','./html2canvas.min.js',
   './icons/icon-192.png','./icons/icon-512.png','./icons/icon-maskable-512.png','./icons/apple-touch-icon.png'];
