@@ -329,7 +329,14 @@ textarea{resize:vertical;min-height:96px;line-height:1.5;}
 .detail-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:22px;padding-top:18px;border-top:1px solid var(--border);}
 
 /* ── KPIs ── */
-.kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:16px 0;}
+.kpi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:16px 0;}
+.kt-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-top:4px;}
+.kt-l{font-size:.72rem;font-weight:700;color:var(--text-secondary);min-width:78px;}
+.kpi-v.kt-v{font-size:1.5rem;margin-top:0;}
+.kt-dif{font-size:.78rem;font-weight:700;padding:1px 7px;border-radius:999px;}
+.kt-dif.ok{color:var(--success);background:var(--success-light);}
+.kt-dif.late{color:var(--warn);background:var(--warn-light);}
+.kpi-ini .kpi-s{margin-top:2px;}
 @media(max-width:900px){.kpi-grid{grid-template-columns:repeat(3,1fr);}}
 @media(max-width:560px){.kpi-grid{grid-template-columns:1fr 1fr;}}
 .kpi-tile{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;box-shadow:var(--shadow-sm);}
@@ -487,6 +494,7 @@ textarea{resize:vertical;min-height:96px;line-height:1.5;}
 .storage-banner{padding:10px 16px;background:var(--danger-light);color:var(--danger);border-bottom:1px solid color-mix(in srgb,var(--danger) 35%,transparent);font-size:.84rem;line-height:1.5;text-align:center;}
 .storage-banner[hidden]{display:none!important;}
 @media(max-width:720px){#btn-install{margin-left:auto;}#btn-install:not([hidden]) + .auto-pill{margin-left:0;}}
+@media(max-width:560px){.kpi-ini{grid-column:1/-1;}}
 /* Document styles (always light) */
 .cdp-doc{background:#fff;color:#1a2035;font-family:'Inter',Arial,sans-serif;font-size:13px;line-height:1.6;border:2.5px solid #00305e;border-radius:6px;overflow:hidden;box-shadow:0 0 0 1px #b0bdd6;}
 .doc-header{background:#00305e;padding:0;display:flex;align-items:stretch;}
@@ -1989,6 +1997,24 @@ function copiarCorreo(id){const r=records.find(x=>x.id===id);if(!r)return;previe
 // INDICADORES
 // ══════════════════════════════════════════
 let _kpiResumen='';
+/** Turno según la hora programada: día (06:00–17:59) o noche (resto). */
+function turnoDe(hhmm){const m=toMin(hhmm);return (m>=360&&m<1080)?'A':'B';}
+const TURNO_LBL={A:'Turno día',B:'Turno noche'};
+/** Minutos normalizados para promediar sin romper el cruce de medianoche en turno noche. */
+function normMin(hhmm,t){let m=toMin(hhmm);if(t==='B'&&m<720)m+=1440;return m;}
+function minToHM(m){m=Math.round(m)%1440;if(m<0)m+=1440;return pad(Math.floor(m/60))+':'+pad(m%60);}
+/** Promedio de hora de inicio real y programada, separado por turno. */
+function inicioPromedio(recs){
+  const acc={};
+  recs.forEach(r=>{
+    const ini=getHoraInicio(r); const ref=(r.labores||[]).find(l=>l.hora);
+    if(!ini||!ref) return;
+    const t=turnoDe(ref.hora); const a=acc[t]=acc[t]||{n:0,ini:0,prog:0};
+    a.n++; a.ini+=normMin(ini,t); a.prog+=normMin(ref.hora,t);
+  });
+  return ['A','B'].filter(t=>acc[t]).map(t=>{const a=acc[t];const ini=a.ini/a.n,prog=a.prog/a.n;return {t,n:a.n,ini:minToHM(ini),prog:minToHM(prog),dif:Math.round(ini-prog)};});
+}
+function fmtDif(d){return d===0?'a tiempo':(d>0?'+':'−')+Math.abs(d)+' min';}
 function renderKpis(){
   const desde=$('k-desde').value, hasta=$('k-hasta').value, ctto=$('k-ctto').value, tol=config.tolerancia||0;
   $('k-tol').value=tol;
@@ -2029,11 +2055,15 @@ function renderKpis(){
   const maxProm=Math.max(1,...rank.map(x=>x.prom));
   const rankHtml=`<div class="rank"><div class="rank-head"><span>Postura</span><span style="text-align:right">CdP</span><span style="text-align:right">% a tiempo</span><span>Atraso prom. (CdP atrasadas)</span></div>${rank.map(x=>`<div class="rank-row" data-tip="${esc(x.p)}\n${x.n} CdP · ${x.pct??'—'}% a tiempo\nSin inicio: ${x.sin}\nAtraso prom.: ${x.prom} min"><span class="rank-name">${esc(x.p)}</span><span class="rank-num">${x.n}</span><span class="rank-num" style="font-weight:700;color:${x.pct===null?'var(--text-muted)':x.pct>=80?'var(--success)':x.pct>=50?'var(--amber)':'var(--danger)'}">${x.pct===null?'—':x.pct+'%'}</span><span class="rank-bar-wrap">${x.prom?`<span class="rank-bar" style="width:${Math.max(3,x.prom/maxProm*100)}%"></span><span class="rank-val">${x.prom} min</span>`:`<span class="rank-val" style="color:var(--success)">${x.sin?x.sin+' sin inicio':'Sin atrasos'}</span>`}</span></div>`).join('')}</div>`;
 
+  // Inicio promedio por turno
+  const inicioProm=inicioPromedio(list);
   // Por labor de referencia
   const byL={};
-  cls.forEach(({r,c})=>{const ref=(r.labores||[]).find(l=>l.hora);const k=ref?ref.labor:'(sin actividad)';(byL[k]=byL[k]||[]).push(c);});
-  const labRank=Object.entries(byL).map(([l,cs])=>{const ev=cs.filter(c=>c.key!=='nd');const ok=ev.filter(c=>c.key==='ok').length;return {l,n:cs.length,pct:ev.length?Math.round(ok/ev.length*100):null};}).sort((a,b)=>b.n-a.n);
-  const labHtml=`<div class="rank"><div class="rank-head" style="grid-template-columns:minmax(90px,1fr) 44px minmax(100px,2fr)"><span>Actividad de inicio</span><span style="text-align:right">CdP</span><span>% a tiempo</span></div>${labRank.map(x=>`<div class="rank-row" style="grid-template-columns:minmax(90px,1fr) 44px minmax(100px,2fr)" data-tip="${esc(x.l)}\n${x.n} CdP · ${x.pct??'—'}% a tiempo"><span class="rank-name">${esc(x.l)}</span><span class="rank-num">${x.n}</span><span class="rank-bar-wrap"><span class="rank-bar ok" style="width:${Math.max(2,x.pct||0)}%"></span><span class="rank-val">${x.pct===null?'—':x.pct+'%'}</span></span></div>`).join('')}</div>`;
+  const ambosTurnos=inicioProm.length>1;
+  cls.forEach(({r,c})=>{const ref=(r.labores||[]).find(l=>l.hora);const k=ref?ref.labor+(ambosTurnos?' · '+(turnoDe(ref.hora)==='A'?'día':'noche'):''):'(sin actividad)';(byL[k]=byL[k]||{cs:[],rs:[]});byL[k].cs.push(c);byL[k].rs.push(r);});
+  const labRank=Object.entries(byL).map(([l,{cs,rs}])=>{const ev=cs.filter(c=>c.key!=='nd');const ok=ev.filter(c=>c.key==='ok').length;const ip=inicioPromedio(rs)[0]||null;return {l,n:cs.length,pct:ev.length?Math.round(ok/ev.length*100):null,ip};}).sort((a,b)=>b.n-a.n);
+  const LG='grid-template-columns:minmax(80px,1fr) 36px 92px minmax(90px,1.6fr)';
+  const labHtml=`<div class="rank"><div class="rank-head" style="${LG}"><span>Actividad de inicio</span><span style="text-align:right">CdP</span><span style="text-align:right">Inicio prom.</span><span>% a tiempo</span></div>${labRank.map(x=>`<div class="rank-row" style="${LG}" data-tip="${esc(x.l)}\n${x.n} CdP · ${x.pct??'—'}% a tiempo${x.ip?`\nInicio prom. ${x.ip.ini} (prog. ${x.ip.prog}, ${fmtDif(x.ip.dif)}) · ${x.ip.n} CdP con inicio`:''}"><span class="rank-name">${esc(x.l)}</span><span class="rank-num">${x.n}</span><span class="rank-num" style="font-weight:700;color:var(--text-primary)">${x.ip?x.ip.ini+`<small style="display:block;font-weight:500;color:var(--text-muted);font-size:.7rem">prog. ${x.ip.prog}</small>`:'—'}</span><span class="rank-bar-wrap"><span class="rank-bar ok" style="width:${Math.max(2,x.pct||0)}%"></span><span class="rank-val">${x.pct===null?'—':x.pct+'%'}</span></span></div>`).join('')}</div>`;
 
   // CNC (Pareto)
   const noCumple=cls.filter(x=>x.c.key!=='ok'&&x.c.key!=='nd');
@@ -2059,6 +2089,7 @@ function renderKpis(){
       <div class="kpi-tile"><div class="kpi-l">CdP registradas</div><div class="kpi-v">${N}</div><div class="kpi-s">${dias} día${dias>1?'s':''} · ${Object.keys(byP).length} posturas</div></div>
       <div class="kpi-tile"><div class="kpi-l">Atraso promedio</div><div class="kpi-v">${promAtraso}<small>min</small></div><div class="kpi-s">${atrasos.length} CdP atrasadas · máx. ${maxAtraso} min</div></div>
       <div class="kpi-tile"><div class="kpi-l">Sin inicio</div><div class="kpi-v">${Math.round(nSin/N*100)}<small>%</small></div><div class="kpi-s">${nSin} CdP sin inicio en la visita</div></div>
+      <div class="kpi-tile kpi-ini"><div class="kpi-l">Inicio promedio de actividades</div>${inicioProm.length?inicioProm.map(x=>`<div class="kt-row">${inicioProm.length>1?`<span class="kt-l">${TURNO_LBL[x.t]}</span>`:''}<span class="kpi-v kt-v">${x.ini}</span><span class="kt-dif ${x.dif>tol?'late':'ok'}">${fmtDif(x.dif)}</span></div><div class="kpi-s">${inicioProm.length>1?'':TURNO_LBL[x.t]+' · '}prog. prom. ${x.prog} · ${x.n} CdP con inicio</div>`).join(''):`<div class="kpi-v">—</div><div class="kpi-s">Sin CdP con hora de inicio y hora programada</div>`}</div>
       <div class="kpi-tile"><div class="kpi-l">Alertas activas</div><div class="kpi-v">${alertasAct}</div><div class="kpi-s">${alertasAlta} de prioridad alta</div></div>
     </div>
     <div class="chart-grid">
@@ -2087,7 +2118,7 @@ function renderKpis(){
         ${labHtml}
       </div>
     </div>
-    <div class="note"><b>Cómo se calcula.</b> Una CdP está <b>a tiempo</b> si la hora de inicio real es ≤ hora programada de la 1ª actividad con hora + tolerancia. <b>Sin inicio</b> = no se registró hora de inicio durante la visita (se cuenta como no cumplida). <b>Sin referencia</b> = no tiene hora programada y queda fuera del %. Inicios después de medianoche se corrigen para turno noche. El atraso promedio considera solo las CdP atrasadas${promGeneral!==null?`; el desfase promedio de todas las CdP con inicio es ${promGeneral>0?'+':''}${promGeneral} min`:''}.</div>`;
+    <div class="note"><b>Cómo se calcula.</b> <b>Inicio promedio</b> = promedio de la hora de inicio real de las CdP que tienen hora de inicio y hora programada, separado en turno día (actividad programada entre 06:00 y 17:59) y turno noche (resto); en turno noche se considera el cruce de medianoche. Una CdP está <b>a tiempo</b> si la hora de inicio real es ≤ hora programada de la 1ª actividad con hora + tolerancia. <b>Sin inicio</b> = no se registró hora de inicio durante la visita (se cuenta como no cumplida). <b>Sin referencia</b> = no tiene hora programada y queda fuera del %. Inicios después de medianoche se corrigen para turno noche. El atraso promedio considera solo las CdP atrasadas${promGeneral!==null?`; el desfase promedio de todas las CdP con inicio es ${promGeneral>0?'+':''}${promGeneral} min`:''}.</div>`;
 
   const per=(desde||hasta)?`${desde?fmtDia(desde,{day:'2-digit',month:'short'}):'inicio'} al ${hasta?fmtDia(hasta,{day:'2-digit',month:'short',year:'numeric'}):'hoy'}`:'todo el registro';
   const peores=rank.filter(x=>x.pct!==null&&x.pct<100).slice(0,3).map(x=>`${x.p} (${x.pct}% a tiempo${x.prom?', atraso prom. '+x.prom+' min':''})`);
@@ -2095,6 +2126,7 @@ function renderKpis(){
     `• CdP registradas: ${N} (${dias} día${dias>1?'s':''}, ${Object.keys(byP).length} posturas)`,
     `• Inicio a tiempo: ${pctOk}% (${nOk} de ${evaluables})${tol?' con tolerancia de '+tol+' min':''}`,
     `• CdP con desfase: ${atrasos.length} — atraso promedio ${promAtraso} min, máximo ${maxAtraso} min`,
+    inicioProm.length?`• Inicio promedio de actividades: ${inicioProm.map(x=>`${TURNO_LBL[x.t]} ${x.ini} h (programado ${x.prog} h, ${fmtDif(x.dif)}; ${x.n} CdP)`).join(' · ')}`:'',
     `• Sin inicio de actividad durante la visita: ${nSin} (${Math.round(nSin/N*100)}%)`,
     cncRank.filter(x=>x.t!=='__sin').length?`• Principales causas (CNC): ${cncRank.filter(x=>x.t!=='__sin').slice(0,3).map(x=>`${x.t} (${x.n})`).join('; ')}${byC.__sin?` · ${byC.__sin.n} sin CNC registrada`:''}`:'',
     peores.length?`• Posturas con menor cumplimiento: ${peores.join('; ')}`:'',
