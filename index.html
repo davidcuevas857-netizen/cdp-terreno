@@ -1223,8 +1223,49 @@ function sortKey(r){return getFecha(r)+'T'+(getHoraVisita(r)||'00:00');}
 function showToast(msg){const t=$('toast');t.textContent=msg;t.classList.add('show');clearTimeout(showToast._t);showToast._t=setTimeout(()=>t.classList.remove('show'),3200);}
 function lsKeys(prefix){try{return lsAllKeys().filter(k=>k.startsWith(prefix));}catch(e){return [];}}
 function lsGet(k){try{return JSON.parse(LS.getItem(k));}catch(e){return null;}}
-function lsSet(k,v){LS.setItem(k,JSON.stringify(v));scheduleAutoSave();}
-function lsDel(k){try{LS.removeItem(k);}catch(e){}scheduleAutoSave();}
+// Las fotos se guardan en IndexedDB (cientos de MB) y el registro liviano en localStorage (~5 MB).
+let IDB_OK=null; // null = aún no verificado → se guarda todo en localStorage
+const isCdpKey=k=>/^cdp_\d/.test(k), isAlertaKey=k=>/^alerta_/.test(k);
+function lsSet(k,v){
+  if(IDB_OK&&v&&typeof v==='object'){
+    if(isCdpKey(k)){
+      if(v.fotoData){
+        const foto=v.fotoData, light={...v,fotoIdb:true}; delete light.fotoData;
+        LS.setItem(k,JSON.stringify(light)); scheduleAutoSave();
+        idbSet('foto:'+k,foto).then(ok=>{if(!ok)lsInlineFallback(k,v);});
+        return;
+      }
+      if(!v.fotoIdb) idbDel('foto:'+k);
+    } else if(isAlertaKey(k)&&Array.isArray(v.fotos)&&v.fotos.length){
+      const f=v.fotos, light={...v,fotos:[],fotosIdb:f.length};
+      LS.setItem(k,JSON.stringify(light)); scheduleAutoSave();
+      idbSet('afotos:'+k,f).then(ok=>{if(!ok)lsInlineFallback(k,v);});
+      return;
+    }
+  }
+  LS.setItem(k,JSON.stringify(v));scheduleAutoSave();
+}
+function lsInlineFallback(k,v){try{LS.setItem(k,JSON.stringify(v));}catch(e){showToast('⚠ Sin espacio: la foto no se pudo guardar');}}
+function lsDel(k){try{LS.removeItem(k);}catch(e){}if(IDB_OK){if(isCdpKey(k))idbDel('foto:'+k);if(isAlertaKey(k))idbDel('afotos:'+k);}scheduleAutoSave();}
+/** Verifica IndexedDB, mueve las fotos antiguas desde localStorage y carga las fotos en memoria. */
+async function storageUpgrade(){
+  IDB_OK=await idbSet('__test',1);
+  if(!IDB_OK) return;
+  let movidas=0;
+  for(const k of lsKeys('cdp_').filter(isCdpKey)){
+    const v=lsGet(k); if(!v||!v.fotoData) continue;
+    if(await idbSet('foto:'+k,v.fotoData)){const light={...v,fotoIdb:true};delete light.fotoData;try{LS.setItem(k,JSON.stringify(light));movidas++;}catch(e){}}
+  }
+  for(const k of lsKeys('alerta_')){
+    const v=lsGet(k); if(!v||!Array.isArray(v.fotos)||!v.fotos.length) continue;
+    if(await idbSet('afotos:'+k,v.fotos)){try{LS.setItem(k,JSON.stringify({...v,fotos:[],fotosIdb:v.fotos.length}));movidas++;}catch(e){}}
+  }
+  for(const r of records){if(r.fotoIdb&&!r.fotoData){const f=await idbGet('foto:'+r.id);if(f)r.fotoData=f;}}
+  for(const a of alertas){if(a.fotosIdb&&!(a.fotos&&a.fotos.length)){const f=await idbGet('afotos:'+a.id);if(Array.isArray(f))a.fotos=f;}}
+  try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
+  if(movidas) console.info('Fotos movidas a IndexedDB:',movidas);
+  if(view==='historial')renderList(); else if(view==='alertas')renderAlertas(); else if(view==='config')renderStorageStatus();
+}
 
 // ══════════════════════════════════════════
 // CONFIG
@@ -1453,7 +1494,7 @@ function init(){
   if(canShareFiles()&&$('btn-share-backup'))$('btn-share-backup').hidden=false;
   refreshContratoFilters(); updateBadges();
   initTooltips();
-  appReady=true; autoInit();
+  appReady=true; storageUpgrade().catch(e=>console.error(e)); autoInit();
   if(!STORE.ok){const sb=$('storage-banner');if(sb)sb.hidden=false;}
   if(PWA_BUILD&&config.docProject===DOC_DEFAULTS.docProject&&!records.length){const h=$('setup-hint');if(h)h.hidden=false;}
   view='';showTab('nueva');
@@ -1565,7 +1606,7 @@ async function submitCdp(e){
     refreshContratoFilters(); updateBadges();
     resetForm();
     showToast(fueEdicion?'✓ CdP actualizada':'✓ CdP guardada');
-  }catch(err){console.error(err);showToast('Error al guardar');}
+  }catch(err){console.error(err);showToast('Error al guardar: '+((err&&err.name==='QuotaExceededError')?'almacenamiento lleno — exporta un respaldo y elimina CdP antiguas':(err&&err.message)||err));}
   finally{btn.disabled=false;btn.textContent=editingId?'Actualizar CdP':'Guardar CdP';}
 }
 
@@ -1679,7 +1720,7 @@ function cardHtml(r){
   const estado=r.estadoVisita?r.estadoVisita.slice(0,110)+(r.estadoVisita.length>110?'…':''):'';
   const isSel=selectedIds.has(r.id);
   const hv=getHoraVisita(r);
-  const foto=r.fotoData||r.fotoId?' 📷':'';
+  const foto=r.fotoData||r.fotoId||r.fotoIdb?' 📷':'';
   return `<div class="cdp-card${isSel?' selected':''}" data-id="${r.id}" style="--st-color:${ST[c.key].color}">
     <div class="cdp-check-wrap"><input type="checkbox" class="cdp-checkbox" aria-label="Seleccionar" ${isSel?'checked':''} onchange="toggleSelect('${r.id}',this.checked)"></div>
     <div class="cdp-card-clickable" onclick="showDetail('${r.id}')">
@@ -2391,11 +2432,15 @@ function updateAutoUI(){
   }
 }
 
-function renderStorageStatus(){
+async function renderStorageStatus(){
   try{
     let bytes=0; lsAllKeys().forEach(k=>{bytes+=(LS.getItem(k)||'').length*2;});
     const mb=bytes/1048576;
-    $('storage-status').innerHTML=`Uso del almacenamiento del navegador: <b>${mb.toFixed(1)} MB</b> de ~5 MB (${records.length} CdP, ${alertas.length} alertas). ${mb>4?'⚠ Cerca del límite: exporta un respaldo y elimina registros antiguos con fotos.':''}`;
+    let fotosTxt='';
+    if(IDB_OK&&navigator.storage&&navigator.storage.estimate){
+      try{const e=await navigator.storage.estimate();fotosTxt=` · Fotos y datos en total: <b>${(e.usage/1048576).toFixed(1)} MB</b> de ${e.quota>1073741824?(e.quota/1073741824).toFixed(1)+' GB':Math.round(e.quota/1048576)+' MB'} disponibles`;}catch(e){}
+    }
+    $('storage-status').innerHTML=`Registros (sin fotos): <b>${mb.toFixed(2)} MB</b> de ~5 MB (${records.length} CdP, ${alertas.length} alertas)${fotosTxt}. ${IDB_OK===false?'⚠ Este navegador no permite el almacén de fotos ampliado: las fotos usan el espacio de ~5 MB.':''}${mb>4?' ⚠ Cerca del límite: exporta un respaldo y elimina CdP antiguas.':''}`;
   }catch(e){}
 }
 function guardarConDatos(){
